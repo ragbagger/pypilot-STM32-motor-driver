@@ -128,10 +128,7 @@ uint16_t TempControllerRaw,TempControllerFiltered,TempControllerHistory;
 
 uint32_t last_loop_cycle_millis = 0;
 uint32_t last_loop_rudder_millis = 0;
-//uint32_t last_loop_voltage_millis = 0;
-//uint32_t last_loop_current_millis = 0;
-//uint32_t last_loop_temperature_millis = 0;
-//uint32_t adc_filter_cycle_millis = 0;
+
 
 uint8_t out_sync_b = 0, out_sync_pos = 0;
 uint8_t crcbytes[3];
@@ -139,7 +136,7 @@ uint16_t AnalogRaw[5];
 
 uint8_t currentByte;
 
-//Test variables to follow
+
 
 /* USER CODE END PV */
 
@@ -234,6 +231,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  /****************************************Main Control Loop ************************************/
   while (1)
   {
 	    //todo: watchdog  //wdt_reset(); // strobe watchdog
@@ -241,13 +239,16 @@ int main(void)
 	  ADC_updateAndFilter(); //Update all ADC values
 	  if(timeout == 120) disengage();  // disengage if nothing is going on, timeout is reset when command is processed
 	  if(timeout >= 128) detach();     // detach 160 ms later
-	  SerialIn();
-	  SetFlags();
-	  SendByte();
+	  SerialIn(); // get serial input from pypilot, process command if valid command received
+	  SetFlags(); // check all inputs and set flags to send back to pypilot, also shut down for error conditions
+	  SendByte(); // Send data back to Pypilot
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+/**************************************End Main Control Loop **********************************/
+
+
   }
   // This is outside infinite loop. We can't get here.
   /* USER CODE END 3 */
