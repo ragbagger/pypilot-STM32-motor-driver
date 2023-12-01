@@ -128,8 +128,8 @@ uint16_t TempControllerRaw,TempControllerFiltered,TempControllerHistory;
 
 uint32_t last_loop_cycle_millis = 0;
 uint32_t last_loop_rudder_millis = 0;
-
-
+uint32_t last_loop_current_millis =0;
+uint32_t last_loop_temperature_millis=0;
 uint8_t out_sync_b = 0, out_sync_pos = 0;
 uint8_t crcbytes[3];
 uint16_t AnalogRaw[5];
@@ -234,7 +234,7 @@ int main(void)
   /****************************************Main Control Loop ************************************/
   while (1)
   {
-	    //todo: watchdog  //wdt_reset(); // strobe watchdog
+	    //todo: implement watchdog
 	  update_command();      // this updates the motor command at appropriate slew rate
 	  ADC_updateAndFilter(); //Update all ADC values
 	  if(timeout == 120) disengage();  // disengage if nothing is going on, timeout is reset when command is processed
@@ -347,11 +347,9 @@ void process_packet()
       /*
        * Todo: Needs reimplpementation. Since I removed all external configuration this is depricated for this version of the software
        */
-#ifdef LOW_CURRENT
+
         unsigned int max_max_current = 2000;
-#else
-        unsigned int max_max_current = 4000;
-#endif
+
         if(value > max_max_current) // maximum is 20 or 40 amps
             value = max_max_current;
         max_current = value;
@@ -368,10 +366,10 @@ void process_packet()
         break;
 
     case RUDDER_MIN_CODE:
-        rudder_min = value; // Todo: I need to understand what is happening with this value. It seems like it's not being used. Especially because it's not being stored or loaded at boot.
+        rudder_min = value;
         break;
     case RUDDER_MAX_CODE:
-        rudder_max = value; // Todo: I need to understand what is happening with this value. It seems like it's not being used. Especially because it's not being stored or loaded at boot.
+        rudder_max = value;
         break;
     case DISENGAGE_CODE:
         if(serialin < 12)
@@ -453,9 +451,7 @@ void position(uint16_t value)
     RPWMset = 0;
   }
 
-#ifndef DISABLE_DEBUGGING_DISPLAY
-  display_motor_PWM = newValue;
-#endif
+
 }
 
 
@@ -469,16 +465,12 @@ void engage() // Must change completely
         return;
     }
 
-#ifdef BOARD_IBT2_H_BRIDGE
-    //pinMode(RPWM_PIN, OUTPUT); // Ensure the pins are configured correctly
-    //pinMode(LPWM_PIN, OUTPUT);
-    //pinMode(ENABLE_PIN, OUTPUT);
 
     RPWMset = 0; // Disengage PWM to both h-bridges
     LPWMset = 0; // Disengage PWM to both h-bridges
     EnableL_High; // Enable both half bridges
     EnableR_High;
-#endif
+
 
     //position(1000); // Not sure why position 1000 is called.
     //digitalWrite(ENGAGE_LED_PIN, HIGH); // status LED
@@ -499,9 +491,7 @@ void disengage() // Will not be changed
     timeout = 60; // detach in about 62ms
     //digitalWrite(ENGAGE_LED_PIN, LOW); // status LED
 
-#ifndef DISABLE_DEBUGGING_DISPLAY
-  display_motor_disengaged();
-#endif
+
 }
 
 void update_command()
@@ -546,20 +536,15 @@ void update_command()
  }
 }
 
-/*
- * Todo: Purpose unclear. It seems to deactivate the h-bridge in all different pwm_styles.
- * However, for the RC_Servo and an h-bridge this should be different.
- * Todo: Find out if this function is only used when an H-Bridge is being utilized.
- * Todo: Make this more obvious. The naming does not give this away.
- */
+
 void detach() // Must change completely
 {
-  #ifdef BOARD_IBT2_H_BRIDGE
+
     RPWMset = 0; // Disengage PWM to both h-bridges
     LPWMset = 0; // Disengage PWM to both h-bridges
     EnableL_Low; // Disable both H-Bridges. This will also disable the motor brake
     EnableR_Low;
-  #endif
+
 
   timeout = 80; // avoid overflow
 }
@@ -627,10 +612,7 @@ if (SerialInReady)
  *******************************************************************************************************/
 void SendByte(void)
 {
-	/*
-	 * The next section sends one byte back to PyPilot. This byte is defined by out_sync_b.
-	 * Todo: where is this defined and what does it do?
-	 */
+
 	    // output 1 byte
 	    switch(out_sync_b) {
 	    case 0:
@@ -747,9 +729,9 @@ void ADC_updateAndFilter(void)
       TempMotorHistory = TempMotorFiltered;
 #endif
 #ifndef DISABLE_TEMP_SENSE
-      TempBoardRaw = AnalogRaw[4];
-      TempBoardFiltered = (uint16_t)(ALPHA_RUDDER * (float)TempBoardRaw + (1 - ALPHA_RUDDER) * (float)TempBoardHistory);
-      TempBoardHistory = TempBoardFiltered;
+      TempControllerRaw = AnalogRaw[4];
+      TempControllerFiltered = (uint16_t)(ALPHA_RUDDER * (float)TempControllerRaw + (1 - ALPHA_RUDDER) * (float)TempControllerHistory);
+      TempControllerHistory = TempControllerFiltered;
 #endif
       ADCcomplete=0;
 	}
@@ -790,25 +772,21 @@ void SetFlags(void)
 #endif
 
 #ifndef DISABLE_CURRENT_SENSE
-    if (millis() - last_loop_current_millis > 500)
+    if (HAL_GetTick() - last_loop_current_millis > 500)
     {
-      uint16_t amps = TakeAmps();
+      uint16_t amps = AmpFiltered;
       if(amps >= max_current) {
           stop();
           flags |= OVERCURRENT_FAULT;
       } else {
           flags &= ~OVERCURRENT_FAULT;
       }
-      last_loop_current_millis = millis();
+      last_loop_current_millis = HAL_GetTick();
     }
 #endif
 
 #ifndef DISABLE_VOLTAGE_SENSE
-    /*
-     * Checks for BADVOLTAGE_FAULT.
-     * Todo:  reimpplement a threashold for number of samples that need to be bad before raising BADVOLTAGE.
-     *        However, a low pass filter should be enough for the most part. The result should be similar.
-     */
+
     if (millis() - last_loop_voltage_millis > 2000)
     {
       uint16_t volts = TakeVolts();
@@ -824,33 +802,27 @@ void SetFlags(void)
 #endif
 
 #ifndef DISABLE_TEMP_SENSE
-    /*
-     * Checks for OVERTEMPERATURE.
-     * Todo:  Cannot be executed every single time. Arduino not fast enough, apparently.
-     */
-    if (millis() - last_loop_temperature_millis > 4000)
+
+    if (HAL_GetTick() - last_loop_temperature_millis > 4000)
     {
-      uint16_t controller_temp = TakeTemp(CONTROLLER_TEMP);
-      uint16_t motor_temp = TakeTemp(MOTOR_TEMP);
+      uint16_t controller_temp = TempControllerFiltered;
+      uint16_t motor_temp = TempMotorFiltered;
       if(controller_temp >= max_controller_temp || motor_temp >= max_motor_temp) {
           stop();
           flags |= OVERTEMP_FAULT;
       } else
           flags &= ~OVERTEMP_FAULT;
 
-      last_loop_temperature_millis = millis();
+      last_loop_temperature_millis = HAL_GetTick();
     }
-    /*
-     * Again, here we reset the controller. Who knows about this? Will PyPilot be notified about the reset?
-     * Todo: Investigate if resetting the controller actually makes sense. Restarting will not lower temperature
-     */
-    /*if(controller_temp > 11000) {
+
+    if(controller_temp > 11000) {
         stop();
         asm volatile ("ijmp" ::"z" (0x0000)); // attempt soft reset
-    }*/
+    }
 #endif
 }
-/*********************Interupt callback routines********************************************************/
+/*********************Interrupt callback routines********************************************************/
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef * hadc)
 {
 ADCcomplete=1;
