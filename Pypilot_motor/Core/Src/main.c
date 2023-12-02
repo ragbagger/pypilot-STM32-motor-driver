@@ -23,6 +23,8 @@
    This is currently aimed at a boat with hydraulic steering so no clutch has been
    implemented. It would be easy to add.
 
+   Please see config.h to set important configuration parameters
+
    The pinout for the STM32 is as follows:
 
    Motor controller---STM32
@@ -199,11 +201,13 @@ int main(void)
   MX_TIM2_Init();         // Setup PWM channels
   MX_ADC1_Init();         // Turn on ADC
   MX_USB_PCD_Init();      // Start USB
+#ifndef NO_WATCH_DOG
   MX_IWDG_Init();         // Start watchdog
+#endif
   /* USER CODE BEGIN 2 */
 // Initialize Motor driver outputs
-  RPWMset = 0; // Disengage PWM to both h-bridges
-  LPWMset = 0; // Disengage PWM to both h-bridges
+  RPWMset = 0;  // PWM set to zero duty cycle to both h-bridges
+  LPWMset = 0;
   EnableL_High; // Enable both half bridges
   EnableR_High;
 //Start peripherals
@@ -238,7 +242,10 @@ int main(void)
   /****************************************Main Control Loop ************************************/
   while (1)
   {
+#ifndef NO_WATCH_DOG
 	  HAL_IWDG_Refresh(&hiwdg) ; //reset watchdog timer
+#endif
+
 	  update_command();      // this updates the motor command at appropriate slew rate
 	  ADC_updateAndFilter(); //Update all ADC values
 	  if(timeout == 120) disengage();  // disengage if nothing is going on, timeout is reset when command is processed
@@ -257,7 +264,6 @@ int main(void)
   // This is outside infinite loop. We can't get here.
   /* USER CODE END 3 */
 }
-
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -305,7 +311,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 }
-
 /* USER CODE BEGIN 4 */
 // Takes action on the received packet from serial_in()
 void process_packet()
@@ -313,11 +318,12 @@ void process_packet()
     flags |= SYNC;
     uint16_t value = in_bytes[1] | in_bytes[2]<<8;
 
-    switch(in_bytes[0]) {
-    case REPROGRAM_CODE:
+    switch(in_bytes[0])
     {
-    // Not implemented for STM32
-    } break;
+    case REPROGRAM_CODE:
+    	{
+    		// Not implemented for STM32
+    	} break;
     case RESET_CODE:
         // reset overcurrent flag
         flags &= ~OVERCURRENT_FAULT;
@@ -418,13 +424,11 @@ void stop_port()
     if(lastpos > 1000)
        stop();
 }
-
 void stop_starboard()
 {
     if(lastpos < 1000)
        stop();
 }
-
 // Sets PWM and direction based on current command value
 void position(uint16_t value)
 {
@@ -452,7 +456,6 @@ void position(uint16_t value)
 
 
 }
-
 // Sets PWM to zero and turns on driver enables
 void engage()
 {
@@ -469,7 +472,6 @@ void engage()
     flags |= ENGAGED;
 
 }
-
 void disengage() // Will not be changed
 {
     stop();
@@ -519,8 +521,7 @@ void update_command()
 	last_loop_cycle_millis = HAL_GetTick(); // Store the time from here to next iteration
  }
 }
-
-// Turns off the driver enable pins and seta the PWMs to zero duty cycle
+// Turns off the driver enable pins and sets the PWMs to zero duty cycle
 void detach()
 {
     RPWMset = 0; // Disengage PWM to both h-bridges
@@ -540,32 +541,32 @@ void SerialIn(void)
      * 4. If no, input isn't synced, advance one byte and try again until sync is achieved
      */
 if (SerialInReady)
-{
-	uint8_t c=currentByte;
-	SerialInReady=0;
-	HAL_UART_Receive_IT(&huart1,&inbyte,1);
-	//count++;
-	if(sync_b < 3) // get a string of 3 bytes
 	{
-	          in_bytes[sync_b] = c;
-	          sync_b++;
-	} else
-	{
+		uint8_t c=currentByte;
+		SerialInReady=0;
+		HAL_UART_Receive_IT(&huart1,&inbyte,1);
+		//count++;
+		if(sync_b < 3) // get a string of 3 bytes
+		{
+			in_bytes[sync_b] = c;
+			sync_b++;
+		} else
+		{
 
-	   if(c == crc8(in_bytes, 3))// check CRC of string and act if match
-	   {
-	      if(in_sync_count >= 2) // Wait for 3 valid commands before acting just to be safe
-	      { // if crc matches, we have a valid packet
-	          process_packet(); //act on current received input
-	      } else
-	          in_sync_count++;
+			if(c == crc8(in_bytes, 3))// check CRC of string and act if match
+			{
+				if(in_sync_count >= 2) // Wait for 3 valid commands before acting just to be safe
+				{ // if crc matches, we have a valid packet
+					process_packet(); //act on current received input
+				} else
+					in_sync_count++;
 
-	      sync_b = 0;
-	      flags &= ~INVALID;
-	    } else
-	    {
+				sync_b = 0;
+				flags &= ~INVALID;
+			} else
+			{
 	              // invalid packet or not synced to input
-	    	// flag not sync and stop until valid command stream
+				  // flag not sync and stop until valid command stream
 	              flags &= ~SYNC;
 	              stop();
 	              in_sync_count = 0; //reset counts
@@ -574,19 +575,19 @@ if (SerialInReady)
 	              in_bytes[1] = in_bytes[2];
 	              in_bytes[2] = c;
 	              flags |= INVALID;
-	     }
+			}
 
-	 }
+		}
+	}
+
 }
-
-}
-
 // Sends packets of data back to pypilot, cycles through data based on out_sync_pos which incremented after each packet is sent
 void SendByte(void)
 {
 
 	    // output 1 byte
-	    switch(out_sync_b) {
+	    switch(out_sync_b)
+	    {
 	    case 0:
 	        // match output rate to input rate
 	        if(serialin < 4)
@@ -597,11 +598,10 @@ void SendByte(void)
 
 	        //  flags C R V C R ct C R mt flags  C  R  V  C  R EE  C  R mct flags  C  R  V  C  R  EE  C  R rr flags  C  R  V  C  R EE  C  R cc  C  R vc
 	        //  0     1 2 3 4 5  6 7 8  9    10 11 12 13 14 15 16 17 18  19    20 21 22 23 24 25  26 27 28 29    30 31 32 33 34 35 36 37 38 39 40 41 42
-	        switch(out_sync_pos++) {
-	        case 0: case 10: case 20: case 30:
-	#ifdef LOW_CURRENT
+	        switch(out_sync_pos++)
+	        {
+	        	case 0: case 10: case 20: case 30:
 	                flags |= CURRENT_RANGE;
-	#endif
 	                v = flags;
 	                 code = FLAGS_CODE;
 	                 break;
@@ -631,13 +631,13 @@ void SendByte(void)
 	                 return;
 	             default:
 	                 return;
-	             }
+	        }
 
-	             crcbytes[0] = code;
-	             crcbytes[1] = v;
-	             crcbytes[2] = v>>8;
-	             // fall through
-	         case 1: case 2:
+	    crcbytes[0] = code;
+	    crcbytes[1] = v;
+	    crcbytes[2] = v>>8;
+	    // fall through
+	    case 1: case 2:
 	             // write next
 	        	 uint8_t temp=crcbytes[out_sync_b];
 	             HAL_UART_Transmit_IT(&huart1,&temp,1);
@@ -647,7 +647,7 @@ void SendByte(void)
 	             }
 	             out_sync_b++;
 	             break;
-	         case 3:
+	    case 3:
 	             // write crc of sync byte plus bytes transmitted
 	        	 uint8_t CRCByte =crc8(crcbytes, 3);
 	        	 HAL_UART_Transmit_IT(&huart1, &CRCByte,1);
@@ -657,7 +657,7 @@ void SendByte(void)
 	             }
 	             out_sync_b = 0;
 	             break;
-	         }
+	    }
 }
 // add current analog values based on alpha values for exponential filtering
 void ADC_updateAndFilter(void)
@@ -694,7 +694,6 @@ void ADC_updateAndFilter(void)
 	}
 
 }
-
 void SetFlags(void)
 {
 #ifndef DISABLE_RUDDER_SENSE
@@ -780,17 +779,14 @@ void HAL_UART_RxCpltCallback  ( UART_HandleTypeDef *  huart )
 {
 	SerialInReady=1;
 	currentByte=inbyte;
-
 }
 void HAL_UART_TxCpltCallback  ( UART_HandleTypeDef *  huart )
 {
 	TxPending=0;
 }
-
 /* USER CODE END 4 */
-
 /**
-  * @brief  Period elapsed callback in non blocking mode
+ * @brief  Period elapsed callback in non blocking mode
   * @note   This function is called  when TIM4 interrupt took place, inside
   * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
   * a global variable "uwTick" used as application time base.
@@ -809,7 +805,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
   /* USER CODE END Callback 1 */
 }
-
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None

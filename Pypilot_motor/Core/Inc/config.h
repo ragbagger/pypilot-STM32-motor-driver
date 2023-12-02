@@ -1,29 +1,13 @@
 /*
- * Author: Timo Birnschein (timo.birnschein@googlemail.com)
- * Date: 2019/11/24
+ * Author: Brad Kauffman
+ * Date: 12/1/2023
  * Credits: Where they are due: https://github.com/seandepagnier is the original author of the Pypilot motor code.
  */
 
 #ifndef __CONFIG_H__
 #define __CONFIG_H__
 
-/*
 
-The program uses a simple protocol to ensure only
-correct data can be received and to ensure that
-false/incorrect or random data is very unlikely to
-produce motor movement.
-
-The input and output over uart has 4 byte packets
-
-The first byte is the command or register, the next
-two bytes is a 16bit value (signed or unsigned)
-the last byte is a crc8 of the first 3 bytes
-
-If incoming data has the correct crc for a few frames
-the command can be recognized.
-
-*/
 
 
 
@@ -37,6 +21,9 @@ enum {SYNC=1, OVERTEMP_FAULT=2, OVERCURRENT_FAULT=4, ENGAGED=8, INVALID=16*1, PO
 //enum {CONTROLLER_TEMP, MOTOR_TEMP};
 enum {CURRENT, VOLTAGE, CONTROLLER_TEMP, MOTOR_TEMP, RUDDER, CHANNEL_COUNT};
 
+// Debug removal of watchdog
+//comment out for production use
+//#define NO_WATCH_DOG
 /*
  * ATTACHED SENSORS
  */
@@ -58,12 +45,11 @@ enum {CURRENT, VOLTAGE, CONTROLLER_TEMP, MOTOR_TEMP, RUDDER, CHANNEL_COUNT};
 // *************************************************************************************************** //
 // ********************************* GENERAL CONFIGURATION VALUES ************************************ //
 // *************************************************************************************************** //
-#define PWM_DEADBAND 40
-
-#define RUDDER_MIN 5000 // The minimum value at which RUDDER_MIN flag is being set
-#define RUDDER_MAX 60535 // The maximum value at which RUDDER_MAX flag is being set
-//#define RUDDER_MIN_ADC 1080 // Your actual minimum sensor value
-//#define RUDDER_MAX_ADC 3080 // Your actual maximum sensor value. These two must be configured to your setup to work properly
+#define PWM_DEADBAND 8
+// These rudder values are set at startup. After that they are set by commands from pypilot
+// Setting these to what pypilot supplies will give the corrrect values out of a reset
+#define RUDDER_MIN 1192 // The minimum value at which RUDDER_MIN flag is being set
+#define RUDDER_MAX 2771 // The maximum value at which RUDDER_MAX flag is being set
 #define TEMPERATURE_CONTROLLER_MAX 7000 // 70 deg C
 #define TEMPERATURE_MOTOR_MAX 7000 // 70 deg C
 #define CURRENT_MOTOR_MAX 2000 // don't allow more than 20Amps
@@ -98,7 +84,7 @@ enum {CURRENT, VOLTAGE, CONTROLLER_TEMP, MOTOR_TEMP, RUDDER, CHANNEL_COUNT};
 // *************************************************************************************************** //
 // Maximum input voltage on the supply pin
 #define VIN_MAX 1800
-// Maximum input voltage on the supply pin
+// Minimum input voltage on the supply pin
 #define VIN_MIN 900
 // Wow the ADC is configured to measure: 0V - 5V
 #define ADC_RANGE 5.0f
