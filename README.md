@@ -20,6 +20,8 @@ Tinypilot motor driver ported to STM32 from original work with Arduino Nano
    The pinout for the STM32 is as follows:
 
    Motor controller---STM32
+
+   
         RPWM          PB3
         LPWM          PA15
         R_EN          PB12
