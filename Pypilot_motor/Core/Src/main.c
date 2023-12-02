@@ -67,6 +67,7 @@ seen two different chips used. I will provide more on this when I implement it i
 #include "main.h"
 #include "adc.h"
 #include "dma.h"
+#include "iwdg.h"
 #include "tim.h"
 #include "usart.h"
 #include "usb.h"
@@ -192,12 +193,13 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_USART1_UART_Init();
-  MX_TIM2_Init();
-  MX_ADC1_Init();
-  MX_USB_PCD_Init();
+  MX_GPIO_Init();         //turn on I/O pins
+  MX_DMA_Init();          // Setup DMA for ADC
+  MX_USART1_UART_Init();  // Setup UART for serial communication
+  MX_TIM2_Init();         // Setup PWM channels
+  MX_ADC1_Init();         // Turn on ADC
+  MX_USB_PCD_Init();      // Start USB
+  MX_IWDG_Init();         // Start watchdog
   /* USER CODE BEGIN 2 */
 // Initialize Motor driver outputs
   RPWMset = 0; // Disengage PWM to both h-bridges
@@ -236,7 +238,7 @@ int main(void)
   /****************************************Main Control Loop ************************************/
   while (1)
   {
-	    //todo: implement watchdog
+	  HAL_IWDG_Refresh(&hiwdg) ; //reset watchdog timer
 	  update_command();      // this updates the motor command at appropriate slew rate
 	  ADC_updateAndFilter(); //Update all ADC values
 	  if(timeout == 120) disengage();  // disengage if nothing is going on, timeout is reset when command is processed
@@ -269,10 +271,11 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
