@@ -69,6 +69,7 @@ seen two different chips used. I will provide more on this when I implement it i
 #include "dma.h"
 #include "tim.h"
 #include "usart.h"
+#include "usb.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -196,6 +197,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM2_Init();
   MX_ADC1_Init();
+  MX_USB_PCD_Init();
   /* USER CODE BEGIN 2 */
 // Initialize Motor driver outputs
   RPWMset = 0; // Disengage PWM to both h-bridges
@@ -292,8 +294,9 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC|RCC_PERIPHCLK_USB;
   PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV8;
+  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL_DIV1_5;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
@@ -301,7 +304,7 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+// Takes action on the received packet from serial_in()
 void process_packet()
 {
     flags |= SYNC;
@@ -310,9 +313,7 @@ void process_packet()
     switch(in_bytes[0]) {
     case REPROGRAM_CODE:
     {
-        // jump to bootloader
-        //asm volatile ("ijmp" ::"z" (0x3c00));
-        //goto *0x3c00;
+    // Not implemented for STM32
     } break;
     case RESET_CODE:
         // reset overcurrent flag
@@ -350,7 +351,7 @@ void process_packet()
 
         unsigned int max_max_current = 2000;
 
-        if(value > max_max_current) // maximum is 20 or 40 amps
+        if(value > max_max_current)
             value = max_max_current;
         max_current = value;
     } break;
@@ -394,18 +395,16 @@ void process_packet()
     } break;
 
     case EEPROM_READ_CODE:{
-        //if(eeprom_read_addr == eeprom_read_end) {
-            //eeprom_read_addr = in_bytes[1];
-            //eeprom_read_end = in_bytes[2];
+        // Not implemented for STM32
         }
     break;
 
     case EEPROM_WRITE_CODE:
-        //eeprom_update_8(in_bytes[1], in_bytes[2]);
+        //Not implemented for STM32
     break;
     }
 }
-
+// Stops motor by sending a neutral command
 void stop()
 {
     position(1000);
@@ -423,30 +422,27 @@ void stop_starboard()
        stop();
 }
 
-/*
- * This is where the magic happens. Receive a command value and drive the corresponding motor controller
- * using the desired pwm setting.
- */
-
+// Sets PWM and direction based on current command value
 void position(uint16_t value)
 {
-  // store the new value as the new last position, used by update_command()
-
-
+  // store the new value as the new last position, used by update_command() to determine next command
   lastpos = value;
   int16_t newValue = abs((int)value - 1000);
 
   // Determine if value is bigger or smaller than 1000 plus deadzone
-  if(value > 1000 + PWM_DEADBAND) {
+  if(value > 1000 + PWM_DEADBAND)
+  {
     // Turn PWM for CCW operation on and the other off
     RPWMset = (uint16_t)(5*newValue);  //timer count is 5000 and command max is 1000 so 5*1000 gives maximum command
     LPWMset =0;
-  } else if(value < 1000 - PWM_DEADBAND) {
+  } else if(value < 1000 - PWM_DEADBAND)
+  {
     // Turn PWM for CW operation on and the other off
 	    LPWMset = (uint16_t)(5*newValue);
 	    RPWMset =0;
-  } else {
-      // Nothing to do. We got about 1000 and need to turn the breaks on and PWM off
+  } else
+  {
+      // Nothing to do. We got about 1000 and need to turn  PWM off
     LPWMset = 0;
     RPWMset = 0;
   }
@@ -454,46 +450,31 @@ void position(uint16_t value)
 
 }
 
-
-/*
- * Configure all PWM modes for the different hardware and set a position command
- */
-void engage() // Must change completely
+// Sets PWM to zero and turns on driver enables
+void engage()
 {
-    if(flags & ENGAGED) { // Already engaged
-        //update_command(); // 30hz
+    if(flags & ENGAGED)
+    { // Already engaged
         return;
     }
-
 
     RPWMset = 0; // Disengage PWM to both h-bridges
     LPWMset = 0; // Disengage PWM to both h-bridges
     EnableL_High; // Enable both half bridges
     EnableR_High;
-
-
-    //position(1000); // Not sure why position 1000 is called.
-    //digitalWrite(ENGAGE_LED_PIN, HIGH); // status LED
-
     timeout = 0;
     flags |= ENGAGED;
 
-
 }
 
-/*
- * Stops the servo, sets the desired value to 1000 (center), opens the clutch and kills the LED
- */
 void disengage() // Will not be changed
 {
     stop();
     flags &= ~ENGAGED;
     timeout = 60; // detach in about 62ms
-    //digitalWrite(ENGAGE_LED_PIN, LOW); // status LED
-
 
 }
-
+// Ramps the motor speed up to the commanded rate based on the slew speed set in Pypilot
 void update_command()
 {
     if(HAL_GetTick() - last_loop_cycle_millis > 20)
@@ -536,24 +517,16 @@ void update_command()
  }
 }
 
-
-void detach() // Must change completely
+// Turns off the driver enable pins and seta the PWMs to zero duty cycle
+void detach()
 {
-
     RPWMset = 0; // Disengage PWM to both h-bridges
     LPWMset = 0; // Disengage PWM to both h-bridges
     EnableL_Low; // Disable both H-Bridges. This will also disable the motor brake
     EnableR_Low;
-
-
-  timeout = 80; // avoid overflow
+    timeout = 80; // avoid overflow
 }
-
-
-/******************SerialIn******************************************************************************
-*   Receives serial data, syncs to stream, and acts on command
-*
-********************************************************************************************************/
+//Receives serial data from Pypilot, syncs to input stream, Checks for valid command and calls process_packet()
 void SerialIn(void)
 {
     /*
@@ -561,7 +534,7 @@ void SerialIn(void)
      * 1. Read 3 bytes
      * 2. Check if the fourth byte is a valid CRC of the first three.
      * 3. If yes, check if at least three packets in a row were valid, if so process packet.
-     * 4. if no, discard, disengage, set invalid flag, reset everything.
+     * 4. If no, input isn't synced, advance one byte and try again until sync is achieved
      */
 if (SerialInReady)
 {
@@ -605,11 +578,7 @@ if (SerialInReady)
 
 }
 
-/******************SendByte()***************************************************************************
- *  Sends a response byte based on serial data received
- *  Called once per cycle of main loop
- *
- *******************************************************************************************************/
+// Sends packets of data back to pypilot, cycles through data based on out_sync_pos which incremented after each packet is sent
 void SendByte(void)
 {
 
@@ -655,17 +624,7 @@ void SendByte(void)
 	                 code = MOTOR_TEMP_CODE;
 	                 break;
 	             case 16: case 26: case 36: /* eeprom reads */
-	                 /*if(eeprom_read_addr != eeprom_read_end) {
-	                     uint8_t value;
-	                     if(eeprom_read_8(eeprom_read_addr, value)) {
-	                         v = value << 8 | eeprom_read_addr;
-	                         eeprom_read_addr++;
-	                         code = EEPROM_VALUE_CODE;
-	                         out_sync_pos--; // fast eeprom read
-	                         break;
-	                     }
-	                     eeprom_read_addr++; // skip for now
-	                 }*/
+	                 // Not implemented on STM32
 	                 return;
 	             default:
 	                 return;
@@ -678,7 +637,7 @@ void SendByte(void)
 	         case 1: case 2:
 	             // write next
 	        	 uint8_t temp=crcbytes[out_sync_b];
-	             HAL_UART_Transmit_IT(&huart1,&temp,1);  //Serial.write(crcbytes[out_sync_b]);
+	             HAL_UART_Transmit_IT(&huart1,&temp,1);
 	             TxPending=1;
 	             while(TxPending)
 	             {
@@ -688,7 +647,7 @@ void SendByte(void)
 	         case 3:
 	             // write crc of sync byte plus bytes transmitted
 	        	 uint8_t CRCByte =crc8(crcbytes, 3);
-	        	 HAL_UART_Transmit_IT(&huart1, &CRCByte,1);//Serial.write(crc8(crcbytes, 3));
+	        	 HAL_UART_Transmit_IT(&huart1, &CRCByte,1);
 	             TxPending=1;
 	             while(TxPending)
 	             {
@@ -697,12 +656,7 @@ void SendByte(void)
 	             break;
 	         }
 }
-/*
- * This function collects a number of samples per ADC channel and filters by averaging the values.
- * Per channel, a different filtering method can be implemented.
- * Current and voltage spikes are desireable to see when setting up PyPilot.
- * Noise on the rudder sensor not so much.
- */
+// add current analog values based on alpha values for exponential filtering
 void ADC_updateAndFilter(void)
 {
 	if(ADCcomplete)
@@ -741,15 +695,7 @@ void ADC_updateAndFilter(void)
 void SetFlags(void)
 {
 #ifndef DISABLE_RUDDER_SENSE
-/*
- * This section is important as it checks for min/max values and allows motion or not.
- * Observation: 0 to 2000 rudder value with 1000 being the center is actually the PWM value for the h-bridge
- * similar to an RC_Servo.
- * If at 1000, the rudder won't move. It's not going back to center. It just won't move any further.
- * If at 1500, it moves slowly towards one side and if at 500 it moves slowly to the other.
- * I wonder where the deadband is implemented because I can't see it here.
- *
- */
+
     if (HAL_GetTick() - last_loop_rudder_millis > 100)
     {
       uint16_t v = RudderFiltered;
