@@ -131,6 +131,7 @@ uint16_t TempMotorRaw,TempMotorFiltered,TempMotorHistory;
 uint16_t TempControllerRaw,TempControllerFiltered,TempControllerHistory;
 
 uint32_t last_loop_cycle_millis = 0;
+uint32_t last_loop_voltage_millis=0;
 uint32_t last_loop_rudder_millis = 0;
 uint32_t last_loop_current_millis =0;
 uint32_t last_loop_temperature_millis=0;
@@ -139,7 +140,11 @@ uint8_t crcbytes[3];
 uint16_t AnalogRaw[5];
 
 uint8_t currentByte;
-
+// Test variables
+float LoopTime;
+uint32_t LastLoopTick;
+uint32_t LoopTotal;
+uint16_t Loopi;
 
 
 /* USER CODE END PV */
@@ -160,6 +165,9 @@ void stop_starboard(void);
 void SerialIn(void);
 void ADC_updateAndFilter(void);
 void SetFlags(void);
+
+//test stuff to be removed
+void GetLoopTime(void);
 
 /* USER CODE END PFP */
 
@@ -245,7 +253,7 @@ int main(void)
 #ifndef NO_WATCH_DOG
 	  HAL_IWDG_Refresh(&hiwdg) ; //reset watchdog timer
 #endif
-
+	  //GetLoopTime(); debug for finding loop time in milliseconds
 	  update_command();      // this updates the motor command at appropriate slew rate
 	  ADC_updateAndFilter(); //Update all ADC values
 	  if(timeout == 120) disengage();  // disengage if nothing is going on, timeout is reset when command is processed
@@ -355,7 +363,7 @@ void process_packet()
         break;
     case MAX_CURRENT_CODE: { // current in units of 10mA
       /*
-       * Todo: Needs reimplpementation. Since I removed all external configuration this is depricated for this version of the software
+       * Todo: Needs reimplpementation.
        */
 
         unsigned int max_max_current = 2000;
@@ -662,35 +670,30 @@ void SendByte(void)
 // add current analog values based on alpha values for exponential filtering
 void ADC_updateAndFilter(void)
 {
-	if(ADCcomplete)
+	if(ADCcomplete) //Set in ADC ISR HAL_ADC_ConvCpltCallback
 	{
 
-#ifndef DISABLE_RUDDER_SENSE
-      RudderRaw = AnalogRaw[0];
+      RudderRaw = AnalogRaw[0];  //AnalogRaw is the DMA location of ADC output, 5 channels 0-4
       RudderFiltered = (uint16_t)(ALPHA_RUDDER * (float)RudderRaw + (1 - ALPHA_RUDDER) * (float)RudderHistory);
       RudderHistory = RudderFiltered;
-#endif
-#ifndef DISABLE_VOLTAGE_SENSE
+
       VoltRaw = AnalogRaw[1];
-      VoltFiltered = (uint16_t)(ALPHA_RUDDER * (float)VoltRaw + (1 - ALPHA_RUDDER) * (float)VoltHistory);
+      VoltFiltered = (uint16_t)(ALPHA_VOLTAGE * (float)VoltRaw + (1 - ALPHA_VOLTAGE) * (float)VoltHistory);
       VoltHistory = VoltFiltered;
-#endif
-#ifndef DISABLE_CURRENT_SENSE
+
       AmpRaw = AnalogRaw[2];
-      AmpFiltered = (uint16_t)(ALPHA_RUDDER * (float)AmpRaw + (1 - ALPHA_RUDDER) * (float)AmpHistory);
+      AmpFiltered = (uint16_t)(ALPHA_CURRENT * (float)AmpRaw + (1 - ALPHA_CURRENT) * (float)AmpHistory);
       AmpHistory = AmpFiltered;
-#endif
-#ifndef DISABLE_TEMP_SENSE
+
       TempMotorRaw = AnalogRaw[3];
-      TempMotorFiltered = (uint16_t)(ALPHA_RUDDER * (float)TempMotorRaw + (1 - ALPHA_RUDDER) * (float)TempMotorHistory);
+      TempMotorFiltered = (uint16_t)(ALPHA_TEMPMOTOR * (float)TempMotorRaw + (1 - ALPHA_TEMPMOTOR) * (float)TempMotorHistory);
       TempMotorHistory = TempMotorFiltered;
-#endif
-#ifndef DISABLE_TEMP_SENSE
+
       TempControllerRaw = AnalogRaw[4];
-      TempControllerFiltered = (uint16_t)(ALPHA_RUDDER * (float)TempControllerRaw + (1 - ALPHA_RUDDER) * (float)TempControllerHistory);
+      TempControllerFiltered = (uint16_t)(ALPHA_TEMPCNTRL * (float)TempControllerRaw + (1 - ALPHA_TEMPCNTRL) * (float)TempControllerHistory);
       TempControllerHistory = TempControllerFiltered;
-#endif
-      ADCcomplete=0;
+
+      ADCcomplete=0; // will be set again in ADC ISR
 	}
 
 }
@@ -735,9 +738,9 @@ void SetFlags(void)
 
 #ifndef DISABLE_VOLTAGE_SENSE
 
-    if (millis() - last_loop_voltage_millis > 2000)
+    if (HAL_GetTick() - last_loop_voltage_millis > 2000)
     {
-      uint16_t volts = TakeVolts();
+      uint16_t volts = VoltFiltered;
       // voltage must be between min and max voltage
       if(volts <= (uint16_t)(VIN_MIN) || volts >= (uint16_t)(VIN_MAX)) {
           stop();
@@ -745,7 +748,7 @@ void SetFlags(void)
       } else
           flags &= ~BADVOLTAGE_FAULT;
 
-      last_loop_voltage_millis = millis();
+      last_loop_voltage_millis = HAL_GetTick();
     }
 #endif
 
@@ -763,12 +766,32 @@ void SetFlags(void)
 
       last_loop_temperature_millis = HAL_GetTick();
     }
-
-    if(controller_temp > 11000) {
-        stop();
-        asm volatile ("ijmp" ::"z" (0x0000)); // attempt soft reset
-    }
+// todo: need to fix this for shutdown
+//    if(controller_temp > 11000) {
+//        stop();
+//        asm volatile ("ijmp" ::"z" (0x0000)); // attempt soft reset
+//    }
 #endif
+}
+
+void GetLoopTime(void)
+{
+	uint32_t t=HAL_GetTick();
+
+	if(t>=LastLoopTick)
+	{
+		uint32_t delta =t-LastLoopTick;
+		LoopTotal=LoopTotal+delta;
+		Loopi++;
+		LastLoopTick=t;
+		if (Loopi>1000)
+		{
+			LoopTime=(float)LoopTotal/1000;
+			LoopTotal=0;
+			Loopi=0;
+		}
+	}
+
 }
 /*********************Interrupt callback routines********************************************************/
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef * hadc)
