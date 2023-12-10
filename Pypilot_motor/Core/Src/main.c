@@ -135,8 +135,8 @@ uint32_t last_loop_voltage_millis=0;
 uint32_t last_loop_rudder_millis = 0;
 uint32_t last_loop_current_millis =0;
 uint32_t last_loop_temperature_millis=0;
-uint8_t out_sync_b = 0, out_sync_pos = 0;
-uint8_t crcbytes[3];
+uint8_t  out_sync_pos = 0;
+uint8_t OutputPacket[4];
 uint16_t AnalogRaw[5];
 
 uint8_t currentByte;
@@ -253,7 +253,7 @@ int main(void)
 #ifndef NO_WATCH_DOG
 	  HAL_IWDG_Refresh(&hiwdg) ; //reset watchdog timer
 #endif
-	  //GetLoopTime(); debug for finding loop time in milliseconds
+	  GetLoopTime(); //debug for finding loop time in milliseconds
 	  update_command();      // this updates the motor command at appropriate slew rate
 	  ADC_updateAndFilter(); //Update all ADC values
 	  if(timeout == 120) disengage();  // disengage if nothing is going on, timeout is reset when command is processed
@@ -592,11 +592,8 @@ if (SerialInReady)
 // Sends packets of data back to pypilot, cycles through data based on out_sync_pos which incremented after each packet is sent
 void SendByte(void)
 {
+if (TxPending) return; //Skip if UART is busy
 
-	    // output 1 byte
-	    switch(out_sync_b)
-	    {
-	    case 0:
 	        // match output rate to input rate
 	        if(serialin < 4)
 	            return;
@@ -640,34 +637,20 @@ void SendByte(void)
 	             default:
 	                 return;
 	        }
+	        // Assemble output packet
+	        OutputPacket[0] = code;
+	        OutputPacket[1] = v;
+	        OutputPacket[2] = v>>8;
+	        OutputPacket[3]=crc8(OutputPacket, 3);
+	    	HAL_UART_Transmit_IT(&huart1, OutputPacket,4); //send it out
+	        TxPending=1;
 
-	    crcbytes[0] = code;
-	    crcbytes[1] = v;
-	    crcbytes[2] = v>>8;
-	    // fall through
-	    case 1: case 2:
-	             // write next
-	        	 uint8_t temp=crcbytes[out_sync_b];
-	             HAL_UART_Transmit_IT(&huart1,&temp,1);
-	             TxPending=1;
-	             while(TxPending)
-	             {
-	             }
-	             out_sync_b++;
-	             break;
-	    case 3:
-	             // write crc of sync byte plus bytes transmitted
-	        	 uint8_t CRCByte =crc8(crcbytes, 3);
-	        	 HAL_UART_Transmit_IT(&huart1, &CRCByte,1);
-	             TxPending=1;
-	             while(TxPending)
-	             {
-	             }
-	             out_sync_b = 0;
-	             break;
-	    }
 }
-// add current analog values based on alpha values for exponential filtering
+// Add current analog values based on alpha values for exponential filtering
+// This is a simple low pass single pole recursive filter of the form
+//   Y[n]=a*X[n]+b*Y[n-1] where a=1-x, b=x, x<1 ref:The Scientist and Engineer's Guide to
+//   Digital Signal Processing by Steven W. Smith, Phd.
+// For some reason the coefficients are defined here in terms of a or ALPHA rather than x
 void ADC_updateAndFilter(void)
 {
 	if(ADCcomplete) //Set in ADC ISR HAL_ADC_ConvCpltCallback
